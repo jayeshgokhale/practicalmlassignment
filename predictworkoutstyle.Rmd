@@ -33,6 +33,8 @@ library(knitr)
 library(kableExtra)
 library(reshape2)
 library(ggpubr)
+library(caret)
+library(VGAM)
 ```
 
 Let us load the data
@@ -132,31 +134,101 @@ isVarSignificant <- function(dfvar,classe)
 
 getSignificanceValue <- function(dfvar,classe)
 {
-  p.value <- summary(glm(classe~dfvar,family="binomial"))$coef[2,4]
-  return(p.value)
+  if(is.factor(dfvar)) return(-1)
+  res.aov <- aov(dfvar ~ classe)
+  f.statistic <- summary(res.aov)[[1]][1,4]
+  return(f.statistic)
 }
 
-signif.vars <- lapply(df.train,isVarSignificant,classe=df.train$classe)
+signif.vars <- lapply(df.train,getSignificanceValue,classe=df.train$classe)
 signif.vars <- do.call("rbind",signif.vars)
 signif.vars <- as.data.frame(signif.vars)
 signif.vars$column_name <- rownames(signif.vars)
-colnames(signif.vars) <- c("IS_SIGNIFICANT","COLUMN_NAME")
-signif.columns <- signif.vars[signif.vars$IS_SIGNIFICANT == TRUE,]$COLUMN_NAME
+colnames(signif.vars) <- c("AOV_F_STATISTIC","COLUMN_NAME")
+signif.vars <- signif.vars[c("COLUMN_NAME","AOV_F_STATISTIC")]
+signif.vars <- signif.vars[order(-signif.vars$AOV_F_STATISTIC),]
+signif.vars
+#signif.columns <- signif.vars[signif.vars$IS_SIGNIFICANT == TRUE,]$COLUMN_NAME
 
-df.train <- df.train[c(signif.columns,"classe")]
+#df.train <- df.train[c(signif.columns,"classe")]
 ```
 
-```{r describedata3}
+```{r describedata3,eval=FALSE}
 summary(df.train)
 str(df.train)
 ```
 
+
+```{r getPValues, eval=FALSE, echo=FALSE}
+col.p.values <- lapply(df.train,getSignificanceValue,classe=df.train$classe)
+col.p.values <- do.call("rbind",col.p.values)
+col.p.values <- as.data.frame(col.p.values)
+col.p.values$column_name <- rownames(col.p.values)
+colnames(col.p.values) <- c("PVALUE","COLUMN_NAME")
+col.p.values <- col.p.values[order(col.p.values$PVALUE),]
+col.p.values <- col.p.values[c("COLUMN_NAME","PVALUE")]
+rownames(col.p.values) <- NULL
+col.p.values
+```
+
+
+Let us draw a sample box plot of first 6
+```{r sampleboxplot}
+getBoxPlot <- function(df,xvar,yvar,fillvar,xlabel,ylabel,filllabel)
+{
+  mybox <- ggplot(data=df, aes(x=xvar,y=yvar)) +
+  geom_boxplot(outlier.colour="black", 
+               outlier.size=2,position=position_dodge(1)) + 
+  labs(title = "",
+       subtitle = "",
+       y = ylabel, x = xlabel) +
+    scale_fill_brewer(name = filllabel,palette="Dark2")  +
+  theme(plot.title = element_text(hjust = 0.5)) 
+  
+  return(mybox)
+}
+
+signif.vars.short <- signif.vars[2:7,]
+
+
+
+for (i in 1:6)
+{
+  mytext <- paste0("plot",i," <-  getBoxPlot(df.train,df.train$classe,df.train$",signif.vars.short[i,]$COLUMN_NAME,
+                   ",'','Class','",signif.vars.short[i,]$COLUMN_NAME,"','')")
+  eval(parse(text=mytext))
+  
+  #print(mytext)
+}
+figure.box <- ggarrange(plot1, plot2, plot3, plot4,plot5,plot6, ncol = 2, nrow = 3)
+figure.box
+
+in.signif.vars.short <- signif.vars[(nrow(signif.vars) - 10):(nrow(signif.vars) - 5),]
+for (i in 1:6)
+{
+  mytext <- paste0("i.plot",i," <-  getBoxPlot(df.train,df.train$classe,df.train$",in.signif.vars.short[i,]$COLUMN_NAME,
+                   ",'','Class','",in.signif.vars.short[i,]$COLUMN_NAME,"','')")
+  eval(parse(text=mytext))
+  
+  #print(mytext)
+}
+i.figure.box <- ggarrange(i.plot1, i.plot2, i.plot3, i.plot4,i.plot5,i.plot6, ncol = 3, nrow = 2)
+i.figure.box
+
+
+#plotGyrosX
+```
+Heatmap of all F Stats >= 100
+
 Now that all are significant, let us find multi-collinearity
 Let us plot all x,y,z columns against one another for a basic heat map
 ```{r basicxyzheatmap, fig.height= 24, fig.width=24}
+f.stat.100 <- signif.vars[signif.vars$AOV_F_STATISTIC >= 100,]$COLUMN_NAME
+f.stat.100 <- f.stat.100[!(f.stat.100 %in% "X")]
+
 #xyz.vars <- colnames(df.train)[grep('_[xyz]$',colnames(df.train))]
 #plot(df.train[xyz.vars])
-correlation.matrix <- cor(df.train[!(colnames(df.train) %in% c("user_name","classe"))])
+correlation.matrix <- cor(df.train[f.stat.100])
 correlation.matrix <- round(correlation.matrix,2)
 correlation.matrix[upper.tri(correlation.matrix)] <- NA
 diag(correlation.matrix) <- NA
@@ -179,52 +251,34 @@ heatMap <- ggplot(data = row.corr.matrix, aes(x=F1, y=F2, fill=CORR)) +
 
 heatMap
 ```
-From the Heat Map it can be concluded that accel_belt_z is very highly correlated to roll_belt and total_accel_belt, accel_belt_y
+From the Heat Map we get some exclusions as under - 
 
-magnet_belt_x is highly correlated to accelt_belt_x
-magnet_belt_z to magnet_belt_y
+magnet_belt_z
+magnet_arm_y
+accel_arm_x
+accel_dumbbell_x
+accel_dumbbell_y
 
-accel_arm_y to accel_belt_z
-magnet_arm_y to magnet_arm_x
-magnet_arm_z to accel_arm_z and magnet_arm_y
+```{r removals}
+removals <- c('magnet_belt_z',
+'magnet_arm_y',
+'accel_arm_x',
+'accel_dumbbell_x',
+'accel_dumbbell_y'
+)
 
-accel_dumbell_x to pitch dumbell
-
-magnet_forearm_x/y to accel_forearm_x/y
-
-
-```{r getPValues}
-col.p.values <- lapply(df.train,getSignificanceValue,classe=df.train$classe)
-col.p.values <- do.call("rbind",col.p.values)
-col.p.values <- as.data.frame(col.p.values)
-col.p.values$column_name <- rownames(col.p.values)
-colnames(col.p.values) <- c("PVALUE","COLUMN_NAME")
-col.p.values <- col.p.values[order(col.p.values$PVALUE),]
-col.p.values <- col.p.values[c("COLUMN_NAME","PVALUE")]
-rownames(col.p.values) <- NULL
-col.p.values
+f.stat.100 <- f.stat.100[!(f.stat.100 %in% removals)]
+f.stat.100
+length(f.stat.100)
 ```
 
+```{r basicmodels, eval=TRUE}
+predictor.vars <- f.stat.100
 
-Let us draw a sample box plot
-```{r sampleboxplot}
-getBoxPlot <- function(df,xvar,yvar,fillvar,xlabel,ylabel,filllabel)
-{
-  mybox <- ggplot(data=df, aes(x=xvar,y=yvar)) +
-  geom_boxplot(outlier.colour="black", 
-               outlier.size=2,position=position_dodge(1)) + 
-  labs(title = "",
-       subtitle = "",
-       y = ylabel, x = xlabel) +
-    scale_fill_brewer(name = filllabel,palette="Dark2")  +
-  theme(plot.title = element_text(hjust = 0.5)) 
-  
-  return(mybox)
-}
-
-plot1 <- getBoxPlot(df.train,df.train$classe,df.train$magnet_arm_x,df.train$user_name,"Class","magnet_arm_x","User")
-
-plot1
-#plotGyrosX
+mytext <- "mod1 <- train(classe~"
+mytext <- paste0(mytext,paste(predictor.vars,collapse="+"))
+mytext <- paste0(mytext,",data=df.train,method='multinom',trace=FALSE)")
+eval(parse(text=mytext))
+prt.mod1 <- predict(mod1)
+confusionMatrix(prt.mod1, df.train$classe)
 ```
-
