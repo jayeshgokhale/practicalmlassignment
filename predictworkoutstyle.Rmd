@@ -272,13 +272,44 @@ f.stat.100
 length(f.stat.100)
 ```
 
+Heat Map Post Removals
+
+```{r basicxyzheatmappostremovals, fig.height= 24, fig.width=24}
+#xyz.vars <- colnames(df.train)[grep('_[xyz]$',colnames(df.train))]
+#plot(df.train[xyz.vars])
+correlation.matrix <- cor(df.train[f.stat.100])
+correlation.matrix <- round(correlation.matrix,2)
+correlation.matrix[upper.tri(correlation.matrix)] <- NA
+diag(correlation.matrix) <- NA
+row.corr.matrix <- melt(correlation.matrix,na.rm=TRUE)
+colnames(row.corr.matrix) <- c("F1","F2","CORR")
+
+heatMap2 <- ggplot(data = row.corr.matrix, aes(x=F1, y=F2, fill=CORR)) + 
+  geom_tile(color="white")+
+  labs(title = "Correlation Coefficient Heat Map",
+       subtitle = "",
+       y = "Features", x = "Features") + 
+  scale_fill_gradient2(low = "red", high = "darkblue", mid = "white", 
+   midpoint = 0, limit = c(-1,1), space = "Lab", 
+   name="Correlation\nCoefficient") +
+  theme_minimal()+ 
+ theme(axis.text.x = element_text(angle = 45, vjust = 1, 
+    size = 12, hjust = 1))+
+ coord_fixed()+
+  geom_text(aes(x=F1, y=F2, label = CORR), color = "black", size = 4)
+
+heatMap2
+```
+
 ```{r basicmodels, eval=TRUE}
 predictor.vars <- f.stat.100
 
 mytext <- "mod1 <- train(classe~"
 mytext <- paste0(mytext,paste(predictor.vars,collapse="+"))
-mytext <- paste0(mytext,",data=df.train,method='multinom',trace=FALSE)")
+mytext <- paste0(mytext,",data=df.train,method='rf',trace=FALSE)")
 eval(parse(text=mytext))
 prt.mod1 <- predict(mod1)
 confusionMatrix(prt.mod1, df.train$classe)
 ```
+
+I got a 100% Accuracy!!! This is too good to be true. So what I have missed out here is Cross Validation. Let us do a k-fold cross validation tomorrow and I think this might start throwing some surprises :)
