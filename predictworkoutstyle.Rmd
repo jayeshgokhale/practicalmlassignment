@@ -1,0 +1,230 @@
+---
+title: "Predict Workout Style"
+author: "Jayesh Gokhale"
+date: "5/8/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Predict Workout Style
+
+Let us download the files first
+```{r downloadfile}
+if (!file.exists("pml-training.csv"))
+{
+  download.file(url="https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv",
+                destfile = "pml-training.csv",method="curl")
+}
+
+if (!file.exists("pml-testing.csv"))
+{
+  download.file(url="https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv",
+                destfile = "pml-testing.csv",method="curl")
+}
+```
+
+```{r loadlibrary}
+library(ggplot2)
+library(RColorBrewer)
+library(knitr)
+library(kableExtra)
+library(reshape2)
+library(ggpubr)
+```
+
+Let us load the data
+```{r loaddata}
+df.train <- read.csv("pml-training.csv")
+df.test <- read.csv("pml-testing.csv")
+```
+
+The first thing is that this timestamp is some crazy julian date or something which I cannot make head or tail out of. Let us do one thing. Let us subtract the min from it.
+
+```{r processData}
+min.ts.1 <- min(df.train$raw_timestamp_part_1)
+min.ts.2 <- min(df.train$raw_timestamp_part_2)
+min.ts.1
+min.ts.2
+#df.train$raw_timestamp_part_1 <- df.train$raw_timestamp_part_1 - min.ts.1
+#df.train$raw_timestamp_part_2 <- df.train$raw_timestamp_part_2 - min.ts.2
+```
+
+
+Exclude All NA vars. For now we will exclude the columns where more than 95% rows are NA.Let us have a look at them later
+```{r findallNA}
+areAllNA <- function(myvector,epsilon=1)
+{
+  if ((sum(is.na(myvector))/length(myvector)) >= epsilon) return(TRUE)
+  return(FALSE)
+}
+
+getNAProportion <- function(myvector)
+{
+  na.proportion <- sum(is.na(myvector))/as.numeric(length(myvector))
+  return(na.proportion)
+}
+
+allNACols <- apply(df.train,2,areAllNA,epsilon=0.95)
+legit.Cols <- names(allNACols[allNACols==FALSE])
+
+legit.Cols
+
+df.train <- df.train[legit.Cols]
+#df.test <- df.test[legit.Cols]
+```
+
+```{r removeuselessvars}
+useless.vars <- c('kurtosis_yaw_belt',
+'skewness_yaw_belt',
+'amplitude_yaw_belt',
+'kurtosis_yaw_dumbbell',
+'skewness_yaw_dumbbell',
+'amplitude_yaw_dumbbell',
+'kurtosis_yaw_forearm',
+'skewness_yaw_forearm',
+'amplitude_yaw_forearm '
+)
+
+df.train <- df.train[!(colnames(df.train) %in% useless.vars)]
+
+# These below values are treated as NA
+df.train[df.train=="#DIV/0!"] <- NA
+df.train[df.train==""] <- NA ##This is suspect move
+```
+
+Let us explore the data
+```{r describedata}
+summary(df.train)
+str(df.train)
+```
+
+```{r anothersetofremoval}
+allNACols.2 <- apply(df.train,2,areAllNA,epsilon=0.95)
+legit.Cols.2 <- names(allNACols.2[allNACols.2==FALSE])
+
+
+df.train <- df.train[legit.Cols.2]
+```
+
+Let us explore the data again
+```{r describedata2}
+summary(df.train)
+str(df.train)
+```
+
+## Including Plots
+
+
+
+
+Now the thing is that there are far too many variables observing each and every one of them manually would be extremely time consuming. Let us do one thing. Let us try to fit a basic logistic regression model: observe the p value and only filter those variables which turn out to be significant.
+
+```{r filtersignificant}
+isVarSignificant <- function(dfvar,classe)
+{
+  p.value <- summary(glm(classe~dfvar,family="binomial"))$coef[2,4]
+  if (p.value < 0.05) return(TRUE)
+  return(FALSE)
+}
+
+getSignificanceValue <- function(dfvar,classe)
+{
+  p.value <- summary(glm(classe~dfvar,family="binomial"))$coef[2,4]
+  return(p.value)
+}
+
+signif.vars <- lapply(df.train,isVarSignificant,classe=df.train$classe)
+signif.vars <- do.call("rbind",signif.vars)
+signif.vars <- as.data.frame(signif.vars)
+signif.vars$column_name <- rownames(signif.vars)
+colnames(signif.vars) <- c("IS_SIGNIFICANT","COLUMN_NAME")
+signif.columns <- signif.vars[signif.vars$IS_SIGNIFICANT == TRUE,]$COLUMN_NAME
+
+df.train <- df.train[c(signif.columns,"classe")]
+```
+
+```{r describedata3}
+summary(df.train)
+str(df.train)
+```
+
+Now that all are significant, let us find multi-collinearity
+Let us plot all x,y,z columns against one another for a basic heat map
+```{r basicxyzheatmap, fig.height= 24, fig.width=24}
+#xyz.vars <- colnames(df.train)[grep('_[xyz]$',colnames(df.train))]
+#plot(df.train[xyz.vars])
+correlation.matrix <- cor(df.train[!(colnames(df.train) %in% c("user_name","classe"))])
+correlation.matrix <- round(correlation.matrix,2)
+correlation.matrix[upper.tri(correlation.matrix)] <- NA
+diag(correlation.matrix) <- NA
+row.corr.matrix <- melt(correlation.matrix,na.rm=TRUE)
+colnames(row.corr.matrix) <- c("F1","F2","CORR")
+
+heatMap <- ggplot(data = row.corr.matrix, aes(x=F1, y=F2, fill=CORR)) + 
+  geom_tile(color="white")+
+  labs(title = "Correlation Coefficient Heat Map",
+       subtitle = "",
+       y = "Features", x = "Features") + 
+  scale_fill_gradient2(low = "red", high = "darkgreen", mid = "white", 
+   midpoint = 0, limit = c(-1,1), space = "Lab", 
+   name="Correlation\nCoefficient") +
+  theme_minimal()+ 
+ theme(axis.text.x = element_text(angle = 45, vjust = 1, 
+    size = 12, hjust = 1))+
+ coord_fixed()+
+  geom_text(aes(x=F1, y=F2, label = CORR), color = "black", size = 4)
+
+heatMap
+```
+From the Heat Map it can be concluded that accel_belt_z is very highly correlated to roll_belt and total_accel_belt, accel_belt_y
+
+magnet_belt_x is highly correlated to accelt_belt_x
+magnet_belt_z to magnet_belt_y
+
+accel_arm_y to accel_belt_z
+magnet_arm_y to magnet_arm_x
+magnet_arm_z to accel_arm_z and magnet_arm_y
+
+accel_dumbell_x to pitch dumbell
+
+magnet_forearm_x/y to accel_forearm_x/y
+
+
+```{r getPValues}
+col.p.values <- lapply(df.train,getSignificanceValue,classe=df.train$classe)
+col.p.values <- do.call("rbind",col.p.values)
+col.p.values <- as.data.frame(col.p.values)
+col.p.values$column_name <- rownames(col.p.values)
+colnames(col.p.values) <- c("PVALUE","COLUMN_NAME")
+col.p.values <- col.p.values[order(col.p.values$PVALUE),]
+col.p.values <- col.p.values[c("COLUMN_NAME","PVALUE")]
+rownames(col.p.values) <- NULL
+col.p.values
+```
+
+
+Let us draw a sample box plot
+```{r sampleboxplot}
+getBoxPlot <- function(df,xvar,yvar,fillvar,xlabel,ylabel,filllabel)
+{
+  mybox <- ggplot(data=df, aes(x=xvar,y=yvar)) +
+  geom_boxplot(outlier.colour="black", 
+               outlier.size=2,position=position_dodge(1)) + 
+  labs(title = "",
+       subtitle = "",
+       y = ylabel, x = xlabel) +
+    scale_fill_brewer(name = filllabel,palette="Dark2")  +
+  theme(plot.title = element_text(hjust = 0.5)) 
+  
+  return(mybox)
+}
+
+plot1 <- getBoxPlot(df.train,df.train$classe,df.train$magnet_arm_x,df.train$user_name,"Class","magnet_arm_x","User")
+
+plot1
+#plotGyrosX
+```
+
