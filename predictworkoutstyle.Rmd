@@ -26,7 +26,7 @@ if (!file.exists("pml-testing.csv"))
 }
 ```
 
-```{r loadlibrary}
+```{r loadlibrary, echo=FALSE, warning=FALSE, results='hide', message=FALSE}
 library(ggplot2)
 library(RColorBrewer)
 library(knitr)
@@ -34,7 +34,6 @@ library(kableExtra)
 library(reshape2)
 library(ggpubr)
 library(caret)
-library(VGAM)
 ```
 
 Let us load the data
@@ -45,15 +44,15 @@ df.test <- read.csv("pml-testing.csv")
 
 The first thing is that this timestamp is some crazy julian date or something which I cannot make head or tail out of. Let us do one thing. Let us subtract the min from it.
 
-```{r processData}
-min.ts.1 <- min(df.train$raw_timestamp_part_1)
-min.ts.2 <- min(df.train$raw_timestamp_part_2)
-min.ts.1
-min.ts.2
-#df.train$raw_timestamp_part_1 <- df.train$raw_timestamp_part_1 - min.ts.1
-#df.train$raw_timestamp_part_2 <- df.train$raw_timestamp_part_2 - min.ts.2
-```
+```{r splitCV, echo=FALSE, eval=FALSE, warning=FALSE, results='hide', message=FALSE}
+set.seed(12345)
+trainIndex = createDataPartition(df.train.cv$classe, p = 0.8,list=FALSE)
+df.train = df.train.cv[trainIndex,]
+df.cv = df.train.cv[-trainIndex,]
 
+nrow(df.train)
+nrow(df.cv)
+```
 
 Exclude All NA vars. For now we will exclude the columns where more than 95% rows are NA.Let us have a look at them later
 ```{r findallNA}
@@ -122,16 +121,9 @@ str(df.train)
 
 
 
-Now the thing is that there are far too many variables observing each and every one of them manually would be extremely time consuming. Let us do one thing. Let us try to fit a basic logistic regression model: observe the p value and only filter those variables which turn out to be significant.
+Now the thing is that there are far too many variables observing each and every one of them manually would be extremely time consuming. Let us do one thing: Let us do a one way ANOVA to get F-Statistic and order these by decrease order of F-Statistic and pick only some top N variables.
 
 ```{r filtersignificant}
-isVarSignificant <- function(dfvar,classe)
-{
-  p.value <- summary(glm(classe~dfvar,family="binomial"))$coef[2,4]
-  if (p.value < 0.05) return(TRUE)
-  return(FALSE)
-}
-
 getSignificanceValue <- function(dfvar,classe)
 {
   if(is.factor(dfvar)) return(-1)
@@ -148,27 +140,11 @@ colnames(signif.vars) <- c("AOV_F_STATISTIC","COLUMN_NAME")
 signif.vars <- signif.vars[c("COLUMN_NAME","AOV_F_STATISTIC")]
 signif.vars <- signif.vars[order(-signif.vars$AOV_F_STATISTIC),]
 signif.vars
-#signif.columns <- signif.vars[signif.vars$IS_SIGNIFICANT == TRUE,]$COLUMN_NAME
-
-#df.train <- df.train[c(signif.columns,"classe")]
 ```
 
 ```{r describedata3,eval=FALSE}
 summary(df.train)
 str(df.train)
-```
-
-
-```{r getPValues, eval=FALSE, echo=FALSE}
-col.p.values <- lapply(df.train,getSignificanceValue,classe=df.train$classe)
-col.p.values <- do.call("rbind",col.p.values)
-col.p.values <- as.data.frame(col.p.values)
-col.p.values$column_name <- rownames(col.p.values)
-colnames(col.p.values) <- c("PVALUE","COLUMN_NAME")
-col.p.values <- col.p.values[order(col.p.values$PVALUE),]
-col.p.values <- col.p.values[c("COLUMN_NAME","PVALUE")]
-rownames(col.p.values) <- NULL
-col.p.values
 ```
 
 
@@ -289,7 +265,7 @@ heatMap2 <- ggplot(data = row.corr.matrix, aes(x=F1, y=F2, fill=CORR)) +
   labs(title = "Correlation Coefficient Heat Map",
        subtitle = "",
        y = "Features", x = "Features") + 
-  scale_fill_gradient2(low = "red", high = "darkblue", mid = "white", 
+  scale_fill_gradient2(low = "darkorange", high = "darkblue", mid = "white", 
    midpoint = 0, limit = c(-1,1), space = "Lab", 
    name="Correlation\nCoefficient") +
   theme_minimal()+ 
@@ -301,15 +277,34 @@ heatMap2 <- ggplot(data = row.corr.matrix, aes(x=F1, y=F2, fill=CORR)) +
 heatMap2
 ```
 
-```{r basicmodels, eval=TRUE}
+## We will do a 5 fold cross validation here (k = 5)
+```{r basicmodels, eval=TRUE, cache=TRUE}
 predictor.vars <- f.stat.100
-
-mytext <- "mod1 <- train(classe~"
+set.seed(1234)
+train_control<- trainControl(method="cv", number=5, savePredictions = TRUE)
+mytext <- "myModel <- train(classe~"
 mytext <- paste0(mytext,paste(predictor.vars,collapse="+"))
-mytext <- paste0(mytext,",data=df.train,method='rf',trace=FALSE)")
+mytext <- paste0(mytext,",data=df.train,trControl=train_control,method='rf',trace=FALSE)")
 eval(parse(text=mytext))
-prt.mod1 <- predict(mod1)
-confusionMatrix(prt.mod1, df.train$classe)
 ```
 
-I got a 100% Accuracy!!! This is too good to be true. So what I have missed out here is Cross Validation. Let us do a k-fold cross validation tomorrow and I think this might start throwing some surprises :)
+## Confusion Matrix on Cross Validation Data
+```{r trainingConfusionMatrix}
+model.kfold.predictions <- myModel$pred
+list.predictions <- split(model.kfold.predictions,model.kfold.predictions$Resample)
+cv.confusion.matrix <- lapply(l.predictions,function(df) confusionMatrix(df$pred,df$obs))
+cv.confusion.matrix
+```
+
+## Confusion Matrix on Cross Validation Data
+```{r crossValidation}
+test.predictions <- predict(myModel,df.cv)
+confusionMatrix(test.predictions, df.cv$classe)
+```
+
+## Let us explore the test data to see whether the predictor vars are available in the test set
+```{r testDataExploration}
+summary(df.test[c(predictor.vars)])
+str(df.test[c(predictor.vars)])
+```
+
