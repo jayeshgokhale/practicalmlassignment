@@ -11,6 +11,19 @@ knitr::opts_chunk$set(echo = TRUE)
 
 # Predict Workout Style
 
+## Executive Summary
+
+On basis of measurement of body movements, we have to detect whether an exercise was performed in correct fashion or one of the incorrect fashions. All of them have been categorized in classes A, B, C, D and E in the classe variable.
+
+## Approach
+
+1. Explore Data Set
+2. Clean Data Set
+3. Identify which variables may be significant (remove multi collinearity)
+4. Build Models
+5. Do Cross Validation
+5. Make Prediction on Test Set
+
 Let us download the files first
 ```{r downloadfile}
 if (!file.exists("pml-training.csv"))
@@ -26,7 +39,8 @@ if (!file.exists("pml-testing.csv"))
 }
 ```
 
-```{r loadlibrary, echo=FALSE, warning=FALSE, results='hide', message=FALSE}
+Let us now load libraries
+```{r loadlibrary, echo=TRUE, warning=FALSE, results='hide', message=FALSE}
 library(ggplot2)
 library(RColorBrewer)
 library(knitr)
@@ -42,19 +56,15 @@ df.train <- read.csv("pml-training.csv")
 df.test <- read.csv("pml-testing.csv")
 ```
 
-The first thing is that this timestamp is some crazy julian date or something which I cannot make head or tail out of. Let us do one thing. Let us subtract the min from it.
+## Data Exploration
+I did a basic exploration of all the columns in the data using summary function. I am skipping that part here because it occupies just too much space. I observed two things - 
 
-```{r splitCV, echo=FALSE, eval=FALSE, warning=FALSE, results='hide', message=FALSE}
-set.seed(12345)
-trainIndex = createDataPartition(df.train.cv$classe, p = 0.8,list=FALSE)
-df.train = df.train.cv[trainIndex,]
-df.cv = df.train.cv[-trainIndex,]
+1. There are many variables which have far too many NA values
+2. There are some numeric factor variables which have a level named #DIV/0 and these have disproportionate number of such values. We will convert them to NA.
+3. There are some numeric factor values which have level named as blank and these too have disproportionate number of such values. We will convert them to NA.
 
-nrow(df.train)
-nrow(df.cv)
-```
+So my strategy would be to find the variables where NA values are greater than 95% (this is just a gut feel number and no science as such behind it). 
 
-Exclude All NA vars. For now we will exclude the columns where more than 95% rows are NA.Let us have a look at them later
 ```{r findallNA}
 areAllNA <- function(myvector,epsilon=1)
 {
@@ -67,6 +77,9 @@ getNAProportion <- function(myvector)
   na.proportion <- sum(is.na(myvector))/as.numeric(length(myvector))
   return(na.proportion)
 }
+# These below values are treated as NA
+df.train[df.train=="#DIV/0!"] <- NA
+df.train[df.train==""] <- NA 
 
 allNACols <- apply(df.train,2,areAllNA,epsilon=0.95)
 legit.Cols <- names(allNACols[allNACols==FALSE])
@@ -74,10 +87,9 @@ legit.Cols <- names(allNACols[allNACols==FALSE])
 legit.Cols
 
 df.train <- df.train[legit.Cols]
-#df.test <- df.test[legit.Cols]
 ```
 
-```{r removeuselessvars}
+```{r removeuselessvars, eval=FALSE, echo=FALSE}
 useless.vars <- c('kurtosis_yaw_belt',
 'skewness_yaw_belt',
 'amplitude_yaw_belt',
@@ -91,9 +103,6 @@ useless.vars <- c('kurtosis_yaw_belt',
 
 df.train <- df.train[!(colnames(df.train) %in% useless.vars)]
 
-# These below values are treated as NA
-df.train[df.train=="#DIV/0!"] <- NA
-df.train[df.train==""] <- NA ##This is suspect move
 ```
 
 Let us explore the data
@@ -102,7 +111,7 @@ summary(df.train)
 str(df.train)
 ```
 
-```{r anothersetofremoval}
+```{r anothersetofremoval, eval=FALSE, echo=FALSE}
 allNACols.2 <- apply(df.train,2,areAllNA,epsilon=0.95)
 legit.Cols.2 <- names(allNACols.2[allNACols.2==FALSE])
 
@@ -110,18 +119,14 @@ legit.Cols.2 <- names(allNACols.2[allNACols.2==FALSE])
 df.train <- df.train[legit.Cols.2]
 ```
 
-Let us explore the data again
-```{r describedata2}
+```{r describedata2, eval=FALSE, echo=FALSE}
 summary(df.train)
 str(df.train)
 ```
 
-## Including Plots
+## Feature Analysis
 
-
-
-
-Now the thing is that there are far too many variables observing each and every one of them manually would be extremely time consuming. Let us do one thing: Let us do a one way ANOVA to get F-Statistic and order these by decrease order of F-Statistic and pick only some top N variables.
+Now the thing is that there are far too many variables observing each and every one of them manually would be extremely time consuming. Let us do one thing: Let us do a **one way ANOVA** to get F-Statistic and order these by decrease order of F-Statistic and pick only some top N variables.
 
 ```{r filtersignificant}
 getSignificanceValue <- function(dfvar,classe)
@@ -139,71 +144,25 @@ signif.vars$column_name <- rownames(signif.vars)
 colnames(signif.vars) <- c("AOV_F_STATISTIC","COLUMN_NAME")
 signif.vars <- signif.vars[c("COLUMN_NAME","AOV_F_STATISTIC")]
 signif.vars <- signif.vars[order(-signif.vars$AOV_F_STATISTIC),]
+```
+
+### F Statistics
+
+Based on the table below we will try our luck with the variables which have three digit F Statistics (ignore the variable:X obviously)
+
+```{r fStatistics}
 signif.vars
 ```
 
-```{r describedata3,eval=FALSE}
-summary(df.train)
-str(df.train)
-```
 
+## Heat Maps
 
-Let us draw a sample box plot of first 6
-```{r sampleboxplot}
-getBoxPlot <- function(df,xvar,yvar,fillvar,xlabel,ylabel,filllabel)
-{
-  mybox <- ggplot(data=df, aes(x=xvar,y=yvar)) +
-  geom_boxplot(outlier.colour="black", 
-               outlier.size=2,position=position_dodge(1)) + 
-  labs(title = "",
-       subtitle = "",
-       y = ylabel, x = xlabel) +
-    scale_fill_brewer(name = filllabel,palette="Dark2")  +
-  theme(plot.title = element_text(hjust = 0.5)) 
-  
-  return(mybox)
-}
+Amongst all the variables for whom F Statistic is three digit (>= 100), there might be some which have multi-collinearity amongst them. We would want to exclude them to avoid variance issues. Let us draw a heat map of Pearson correlation.
 
-signif.vars.short <- signif.vars[2:7,]
-
-
-
-for (i in 1:6)
-{
-  mytext <- paste0("plot",i," <-  getBoxPlot(df.train,df.train$classe,df.train$",signif.vars.short[i,]$COLUMN_NAME,
-                   ",'','Class','",signif.vars.short[i,]$COLUMN_NAME,"','')")
-  eval(parse(text=mytext))
-  
-  #print(mytext)
-}
-figure.box <- ggarrange(plot1, plot2, plot3, plot4,plot5,plot6, ncol = 2, nrow = 3)
-figure.box
-
-in.signif.vars.short <- signif.vars[(nrow(signif.vars) - 10):(nrow(signif.vars) - 5),]
-for (i in 1:6)
-{
-  mytext <- paste0("i.plot",i," <-  getBoxPlot(df.train,df.train$classe,df.train$",in.signif.vars.short[i,]$COLUMN_NAME,
-                   ",'','Class','",in.signif.vars.short[i,]$COLUMN_NAME,"','')")
-  eval(parse(text=mytext))
-  
-  #print(mytext)
-}
-i.figure.box <- ggarrange(i.plot1, i.plot2, i.plot3, i.plot4,i.plot5,i.plot6, ncol = 3, nrow = 2)
-i.figure.box
-
-
-#plotGyrosX
-```
-Heatmap of all F Stats >= 100
-
-Now that all are significant, let us find multi-collinearity
-Let us plot all x,y,z columns against one another for a basic heat map
 ```{r basicxyzheatmap, fig.height= 24, fig.width=24}
 f.stat.100 <- signif.vars[signif.vars$AOV_F_STATISTIC >= 100,]$COLUMN_NAME
 f.stat.100 <- f.stat.100[!(f.stat.100 %in% "X")]
 
-#xyz.vars <- colnames(df.train)[grep('_[xyz]$',colnames(df.train))]
-#plot(df.train[xyz.vars])
 correlation.matrix <- cor(df.train[f.stat.100])
 correlation.matrix <- round(correlation.matrix,2)
 correlation.matrix[upper.tri(correlation.matrix)] <- NA
@@ -221,19 +180,29 @@ heatMap <- ggplot(data = row.corr.matrix, aes(x=F1, y=F2, fill=CORR)) +
    name="Correlation\nCoefficient") +
   theme_minimal()+ 
  theme(axis.text.x = element_text(angle = 45, vjust = 1, 
-    size = 12, hjust = 1))+
+    size = 16, hjust = 1), axis.text.y = element_text(size = 16))+
  coord_fixed()+
-  geom_text(aes(x=F1, y=F2, label = CORR), color = "black", size = 4)
+  geom_text(aes(x=F1, y=F2, label = CORR), color = "black", size = 4) +
+    theme(axis.title=element_text(size=18,face="bold"))
 
 heatMap
 ```
+
+### Heatmap Observations
+
+It is difficult to observe the heatmap from the HTML file. I have manually saved the heatmap as a PNG file and magnified it to make my observations. So the extreme correlation cases (on either side of 0.8 and -0.8 approx) should be excluded from the model.
+
 From the Heat Map we get some exclusions as under - 
 
-magnet_belt_z
-magnet_arm_y
-accel_arm_x
-accel_dumbbell_x
-accel_dumbbell_y
+**exclude**: magnet_belt_z (due to inclusion of magnet_belt_y)
+
+**exclude**: magnet_arm_y (due to inclusion of magnet_arm_x)
+
+**exclude**: accel_arm_x (due to inclusion of magnet_arm_x)
+
+**exclude**: accel_dumbbell_x (due to inclusion of pitch_dumbbell)
+
+**exclude**: accel_dumbbell_y (due to inclusion of roll_dumbbell)
 
 ```{r removals}
 removals <- c('magnet_belt_z',
@@ -248,9 +217,56 @@ f.stat.100
 length(f.stat.100)
 ```
 
-Heat Map Post Removals
 
-```{r basicxyzheatmappostremovals, fig.height= 24, fig.width=24}
+## Box Plot
+
+Let us draw box plots of all the chosen variables
+
+```{r sampleboxplot}
+getBoxPlot <- function(df,xvar,yvar,fillvar,xlabel,ylabel,filllabel)
+{
+  mybox <- ggplot(data=df, aes(x=xvar,y=yvar,fill=xvar)) +
+  geom_boxplot(outlier.colour="black", 
+               outlier.size=1,position=position_dodge(1)) + 
+  labs(title = "",
+       subtitle = "",
+       y = ylabel, x = xlabel) +
+    scale_fill_brewer(name = filllabel,palette="YlGnBu")  + #Dark2
+    theme(legend.position = "none") + 
+    theme(axis.text=element_text(size=14),
+        axis.title=element_text(size=18,face="bold")) + 
+  theme(plot.title = element_text(hjust = 0.5)) 
+  
+  return(mybox)
+}
+
+signif.vars.short <- signif.vars[2:7,]
+
+
+mytextmain <- "figure.box <- ggarrange("
+  
+for (i in 1:length(f.stat.100))
+{
+  mytext <- paste0("plot",i," <-  getBoxPlot(df.train,df.train$classe,df.train$",f.stat.100[i],
+                   ",'','Class','",f.stat.100[i],"','')")
+  mytextmain <- paste0(mytextmain,"plot",i,",")
+  eval(parse(text=mytext))
+}
+
+mytextmain <- paste0(mytextmain," ncol = 4, nrow = ",ceiling(length(f.stat.100)/4), ")")
+eval(parse(text=mytextmain))
+```
+
+```{r showboxplots, fig.height=24, fig.width=24}
+figure.box
+```
+
+### Box Plot Observations
+
+We can see that there is some amount of variance amongst classes in each of these variables as indicated by the one way ANOVA test. Let us try building a model using all of these.
+
+
+```{r basicxyzheatmappostremovals,echo=FALSE, eval=FALSE, fig.height= 24, fig.width=24}
 #xyz.vars <- colnames(df.train)[grep('_[xyz]$',colnames(df.train))]
 #plot(df.train[xyz.vars])
 correlation.matrix <- cor(df.train[f.stat.100])
@@ -277,7 +293,61 @@ heatMap2 <- ggplot(data = row.corr.matrix, aes(x=F1, y=F2, fill=CORR)) +
 heatMap2
 ```
 
-## We will do a 5 fold cross validation here (k = 5)
+## Model Building
+
+Let us first try to build a basic Multi-Nomial Regression and see where we stand
+
+## Multinomial Regression
+```{r multinomialModel, eval=TRUE, cache=TRUE}
+predictor.vars <- f.stat.100
+set.seed(1234)
+trainIndex = createDataPartition(df.train$classe, p = 0.8,list=FALSE)
+training = df.train[trainIndex,]
+testing = df.train[-trainIndex,]
+
+mytext <- "modMultiNom <- train(classe~"
+mytext <- paste0(mytext,paste(predictor.vars,collapse="+"))
+mytext <- paste0(mytext,",data=training,method='multinom',trace=FALSE)")
+eval(parse(text=mytext))
+```
+
+```{r multinomCV}
+prediction.train.multinom <- predict(modMultiNom)
+prediction.CV.multinom <- predict(modMultiNom,testing)
+```
+## Confusion Matrix for Cross Validation (Multi Nomial Model)
+```{r multinomCVConfusionMatrix}
+confusionMatrix(prediction.CV.multinom,testing$classe)
+```
+
+### Multinomial Regression Observations
+
+Our Cross Validation Accuracy is just over 50% which is not great. Perhaps the reason for that is that partition boundary on the hyper-plane is not linear. Let us try non-linear approaches like Decision Trees. 
+
+## Decision Tree
+
+```{r decisionTree, eval=TRUE, cache=TRUE}
+set.seed(1234)
+mytext <- "modDT <- train(classe~"
+mytext <- paste0(mytext,paste(predictor.vars,collapse="+"))
+mytext <- paste0(mytext,",data=training,method='rpart')")
+eval(parse(text=mytext))
+```
+
+```{r dtCV}
+prediction.train.DT <- predict(modDT)
+prediction.CV.DT <- predict(modDT,testing)
+```
+## Confusion Matrix for Cross Validation (Decision Tree Model)
+```{r dtCVConfusionMatrix}
+confusionMatrix(prediction.CV.DT,testing$classe)
+```
+
+### Decision Tree Observations
+
+Our Cross Validation Accuracy is no better than Multi Nomial. Let us try for a Random Forest Classifier with K-Fold Cross Validation.
+
+## Random Forest Classification with K-Fold Cross Validation (K = 5)
 ```{r basicmodels, eval=TRUE, cache=TRUE}
 predictor.vars <- f.stat.100
 set.seed(1234)
@@ -288,7 +358,7 @@ mytext <- paste0(mytext,",data=df.train,trControl=train_control,method='rf',trac
 eval(parse(text=mytext))
 ```
 
-## Confusion Matrix on Cross Validation Data
+## Confusion Matrix on Cross Validation Data (Random Forest with 5-fold)
 ```{r trainingConfusionMatrix}
 model.kfold.predictions <- myModel$pred
 list.predictions <- split(model.kfold.predictions,model.kfold.predictions$Resample)
@@ -296,16 +366,54 @@ cv.confusion.matrix <- lapply(list.predictions,function(df) confusionMatrix(df$p
 cv.confusion.matrix
 ```
 
-## Let us explore the test data to see whether the predictor vars are available in the test set
+### Cross Validation Observations (Random Forest with 5-fold)
+
+We can see that on every fold we have an accuracy of over 99% with over 99% Sensitivity and Specificity for each class. I think this model is good enough to deploy on test set :)
+
+## Test Set Exploration
+
+Let us explore the test data to see whether the predictor vars are available in the test set. We have already checked that dates for Test Set are same as Training Set. So this does not seem to be a time series forecasting problem.
+
 ```{r testDataExploration}
 summary(df.test[c(predictor.vars)])
 str(df.test[c(predictor.vars)])
 ```
 
+On exploration we can see that data is present for the variables and there are no NAs. We can proceed with Prediction.
+
+## Predictions
 
 ```{r predictTestSet}
 test.predictions <- predict(myModel,df.test)
-test.predictions
 df.test$prediction <- test.predictions
-df.test[c("problem_id","user_name","prediction")]
+paired.colors <- brewer.pal(name="Paired",n=12)
+col.A <- which(df.test$prediction=="A")
+col.B <- which(df.test$prediction=="B")
+col.C <- which(df.test$prediction=="C")
+col.D <- which(df.test$prediction=="D")
+col.E <- which(df.test$prediction=="E")
+
+kable(df.test[c("problem_id","user_name","prediction")], booktabs = T, align = "l") %>% kable_styling(bootstrap_options = "bordered",
+                full_width = FALSE) %>%
+row_spec(col.A, bold = T, color = paired.colors[1]) %>%  
+row_spec(col.B, bold = T, color = paired.colors[4]) %>%  
+row_spec(col.C, bold = T, color = paired.colors[7]) %>%  
+row_spec(col.D, bold = T, color = paired.colors[10]) %>%  
+row_spec(col.E, bold = T, color = paired.colors[12]) 
 ```
+
+## Conclusion
+
+1. There were some variables which had lots of NAs, irrelevant values and hence those variables had to be discarded.
+2. Despite that there were several variables left. Hence we had to do some kind of selection.
+3. We used one way ANOVA to select such variables on descending order of F Statistic.
+4. We removed some variables out of those based on multi-collinearity.
+5. Then we built following models in stages - 
+    a. Multinomial Regression: CV Accuracy of about 55%
+    b. Decision Tree: CV Accuracy of about 54%
+    c. Random Forest Classification with K-Fold Cross Validation (K = 5): CV Accuracy of about 99% with about same Sensitivity, Specificity and PPV for each class.
+6. We then explored the Test Set to ensure that all the predictors have values for the test set. Once that is assured, we used the Random Forest Classifier to make predictions.
+
+**CAVEAT**: We used 17 variables in our models. It is possible that we could have got nearly similar results using lesser variables in Random Forest or better results in Multinomial/Decision Trees using more variables. However this process is rather time consuming. I will leave this task to some other day :)
+
+# Thank You
