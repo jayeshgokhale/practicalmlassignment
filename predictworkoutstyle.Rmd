@@ -292,14 +292,8 @@ eval(parse(text=mytext))
 ```{r trainingConfusionMatrix}
 model.kfold.predictions <- myModel$pred
 list.predictions <- split(model.kfold.predictions,model.kfold.predictions$Resample)
-cv.confusion.matrix <- lapply(l.predictions,function(df) confusionMatrix(df$pred,df$obs))
+cv.confusion.matrix <- lapply(list.predictions,function(df) confusionMatrix(df$pred,df$obs))
 cv.confusion.matrix
-```
-
-## Confusion Matrix on Cross Validation Data
-```{r crossValidation}
-test.predictions <- predict(myModel,df.cv)
-confusionMatrix(test.predictions, df.cv$classe)
 ```
 
 ## Let us explore the test data to see whether the predictor vars are available in the test set
@@ -308,3 +302,10 @@ summary(df.test[c(predictor.vars)])
 str(df.test[c(predictor.vars)])
 ```
 
+
+```{r predictTestSet}
+test.predictions <- predict(myModel,df.test)
+test.predictions
+df.test$prediction <- test.predictions
+df.test[c("problem_id","user_name","prediction")]
+```
