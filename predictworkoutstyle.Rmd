@@ -325,7 +325,7 @@ confusionMatrix(prediction.CV.multinom,testing$classe)
 Our Cross Validation Accuracy is just over 50% which is not great. Perhaps the reason for that is that partition boundary on the hyper-plane is not linear. Let us try non-linear approaches like Decision Trees. 
 
 ## Decision Tree
-
+ 
 ```{r decisionTree, eval=TRUE, cache=TRUE}
 set.seed(1234)
 mytext <- "modDT <- train(classe~"
